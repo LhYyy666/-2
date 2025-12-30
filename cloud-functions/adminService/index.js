@@ -3,10 +3,12 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 cloud.init({
-  env: cloud.DYNAMIC_CURRENT_ENV
+  env: 'cloud1-2gyakmjl948dda68'
 });
 
-const db = cloud.database();
+const db = cloud.database({
+  env: 'cloud1-2gyakmjl948dda68'
+});
 const _ = db.command;
 // 建议在云函数配置中设置环境变量 JWT_SECRET
 const JWT_SECRET = process.env.JWT_SECRET || 'default-secret-please-change';
@@ -63,6 +65,13 @@ exports.main = async (event, context) => {
     switch (type) {
       case 'admin-login':
         return await handleLogin(data);
+
+      case 'sync-device-status':
+      case 'syncDeviceStatus':
+        return await handleSyncDeviceStatus();
+      
+      case 'version':
+        return { code: 0, version: '1.0.1' };
       
       // 以下接口需要鉴权
       case 'get-users':
@@ -76,14 +85,57 @@ exports.main = async (event, context) => {
         if (type === 'delete-user') return await handleDeleteUser(data);
         break;
 
+      // 设备串码导入（不强制鉴权，按需开启）
+      case 'import-device-serials':
+      case 'importDeviceSerials':
+      case '导入设备序列':
+        return await handleImportDeviceSerials(data);
+      
+      case 'list-device-serials':
+      case 'listDeviceSerials':
+      case '设备串码列表':
+        return await handleListDeviceSerials(data);
+
+      case 'debug':
+        return await handleDebug();
+
       default:
         return { code: 404, msg: `Unknown type: ${type}` };
     }
   } catch (err) {
     console.error('Error:', err);
-    return { code: 500, msg: err.message };
+    return { code: 500, msg: err.message, stack: err.stack };
   }
 };
+
+async function handleDebug() {
+  try {
+    const ctx = cloud.getWXContext();
+    // 尝试读取一条数据
+    const testRes = await db.collection('users').limit(1).get();
+    return {
+      code: 0,
+      msg: 'Debug success',
+      info: {
+        currentEnv: ctx.ENV,
+        dbEnv: db.config.env,
+        collectionUsersExists: true,
+        recordCount: testRes.data.length
+      }
+    };
+  } catch (e) {
+    return {
+      code: 500,
+      msg: 'Debug failed',
+      info: {
+        currentEnv: cloud.getWXContext().ENV,
+        dbEnv: db.config.env,
+        error: e.message,
+        errorCode: e.errCode
+      }
+    };
+  }
+}
 
 function ensureAuth(token) {
   if (!token) return false;
@@ -97,22 +149,41 @@ async function handleLogin(data) {
     return { code: 400, msg: 'Username and password required' };
   }
 
-  // 假设管理员集合为 'admins'
-  const res = await db.collection('admins').where({ username }).get();
+  // 改为查询 users 集合
+  // 支持 username 或 phone 登录
+  let query = db.collection('users').where({ username });
+  let res = await query.get();
+  
+  if (res.data.length === 0) {
+    // 尝试用手机号查找
+    res = await db.collection('users').where({ phone: username }).get();
+  }
+
   if (res.data.length === 0) {
     return { code: 401, msg: 'Invalid credentials' };
   }
 
-  const admin = res.data[0];
+  const user = res.data[0];
+
+  // 检查权限
+  if (user.role !== 'admin') {
+    return { code: 403, msg: 'Permission denied: Not an admin' };
+  }
+
+  // 验证密码
+  // 如果数据库中没有密码字段，直接拒绝
+  if (!user.password) {
+    return { code: 401, msg: 'Password not set' };
+  }
+
   // 验证密码 (假设数据库存的是 bcrypt hash)
-  // 初始时如果数据库是明文，可以临时改成 admin.password === password
-  const isValid = await bcrypt.compare(password, admin.password);
+  const isValid = await bcrypt.compare(password, user.password);
   
   if (!isValid) {
     return { code: 401, msg: 'Invalid credentials' };
   }
 
-  const token = generateToken({ id: admin._id, username: admin.username });
+  const token = generateToken({ id: user._id, username: user.username || user.phone });
   return { code: 0, data: { token } };
 }
 
@@ -122,10 +193,11 @@ async function handleGetUsers(data) {
 
   let query = db.collection('users');
   if (keyword) {
-    // 模糊搜索 name 或 phone
+    // 模糊搜索 name 或 phone 或 grid
     query = query.where(_.or([
       { name: db.RegExp({ regexp: keyword, options: 'i' }) },
-      { phone: db.RegExp({ regexp: keyword, options: 'i' }) }
+      { phone: db.RegExp({ regexp: keyword, options: 'i' }) },
+      { grid: db.RegExp({ regexp: keyword, options: 'i' }) }
     ]));
   }
 
@@ -143,6 +215,64 @@ async function handleGetUsers(data) {
   };
 }
 
+// 同步设备状态
+async function handleSyncDeviceStatus() {
+  try {
+    const _ = db.command;
+    const MAX_LIMIT = 1000;
+    
+    // 1. 获取 receipts 集合中的所有 SN
+    const receiptsRes = await db.collection('receipts')
+      .field({ snList: true })
+      .limit(MAX_LIMIT)
+      .get();
+      
+    // 提取所有 snList 中的 SN，假设 snList 是一个数组或字符串
+    // 如果 snList 是数组，直接展平；如果是字符串，根据情况分割（这里假设是数组或单值）
+    const receiptSNs = receiptsRes.data
+      .flatMap(r => r.snList)
+      .filter(sn => sn && typeof sn === 'string' && sn.trim() !== '');
+      
+    if (receiptSNs.length === 0) {
+      return { code: 0, msg: 'No receipts to sync', updated: 0 };
+    }
+    
+    // 去重
+    const uniqueSNs = [...new Set(receiptSNs)];
+
+    // 2. 批量更新 device_serials
+    const BATCH_SIZE = 100;
+    let totalUpdated = 0;
+
+    for (let i = 0; i < uniqueSNs.length; i += BATCH_SIZE) {
+      const batchSNs = uniqueSNs.slice(i, i + BATCH_SIZE);
+      
+      const updateRes = await db.collection('device_serials')
+        .where({
+          SN: _.in(batchSNs),
+          status: _.neq('已出库')
+        })
+        .update({
+          data: {
+            status: '已出库',
+            updatedAt: Date.now()
+          }
+        });
+        
+      totalUpdated += updateRes.stats.updated;
+    }
+
+    return {
+      code: 0,
+      msg: 'Sync success',
+      updated: totalUpdated
+    };
+  } catch (err) {
+    console.error('Sync error:', err);
+    return { code: 500, msg: 'Sync failed: ' + err.message };
+  }
+}
+
 async function handleUpdateUser(data) {
   const { id, ...updates } = data;
   if (!id) return { code: 400, msg: 'Missing id' };
@@ -151,11 +281,29 @@ async function handleUpdateUser(data) {
   delete updates.token;
   delete updates.type;
 
-  await db.collection('users').doc(id).update({
-    data: updates
-  });
+  updates.role = normalizeRole(updates.role);
+
+  const docRes = await db.collection('users').doc(id).get();
+  const user = Array.isArray(docRes.data) ? docRes.data[0] : docRes.data;
+  if (!user) {
+    return { code: 404, msg: 'User not found' };
+  }
+  // 移除迁移逻辑，只更新 users 集合
+  // 使用事务保证原子性（此处事务非必须，但为了代码结构保留或简化）
+  // 仅在 users 集合中更新 role
+  await db.collection('users').doc(id).update({ data: updates });
 
   return { code: 0, msg: 'Updated successfully' };
+}
+
+function normalizeRole(role) {
+  if (!role) return 'user';
+  const s = String(role).toLowerCase();
+  if (s === 'admin') return 'admin';
+  if (s === 'user') return 'user';
+  if (role === '管理员' || role === '行政') return 'admin';
+  if (role === '普通用户') return 'user';
+  return 'user';
 }
 
 async function handleDeleteUser(data) {
@@ -165,4 +313,66 @@ async function handleDeleteUser(data) {
   await db.collection('users').doc(id).remove();
 
   return { code: 0, msg: 'Deleted successfully' };
+}
+
+// 设备串码导入
+async function handleImportDeviceSerials(data) {
+  const { list } = data || {};
+  if (!Array.isArray(list) || list.length === 0) {
+    return { code: 400, msg: 'empty list' };
+  }
+  const col = db.collection('device_serials');
+  const snList = list.map(x => String(x.SN || '').trim()).filter(Boolean);
+  const cemiList = list.map(x => String(x.CEMI || '').trim()).filter(Boolean);
+  const existingBySN = snList.length ? (await col.where({ SN: _.in(snList) }).get()).data : [];
+  const existingByCEMI = cemiList.length ? (await col.where({ CEMI: _.in(cemiList) }).get()).data : [];
+  const seenSN = new Set(existingBySN.map(x => x.SN));
+  const seenCEMI = new Set(existingByCEMI.map(x => x.CEMI));
+  const now = Date.now();
+  let inserted = 0;
+  for (const it of list) {
+    const SN = String(it.SN || '').trim();
+    const CEMI = String(it.CEMI || '').trim();
+    if (!SN && !CEMI) continue;
+    if ((SN && seenSN.has(SN)) || (CEMI && seenCEMI.has(CEMI))) continue;
+    const doc = {
+      SN,
+      CEMI,
+      deviceName: String(it.deviceName || '').trim(),
+      deviceModel: String(it.deviceModel || '').trim(),
+      inboundTime: String(it.inboundTime || '').trim(),
+      status: String(it.status || '未使用').trim(),
+      isUsed: 0,
+      createdAt: now,
+      updatedAt: now
+    };
+    await col.add({ data: doc });
+    inserted++;
+  }
+  return { code: 0, data: { inserted, duplicated: list.length - inserted } };
+}
+
+async function handleListDeviceSerials(data) {
+  const { page = 1, pageSize = 10, keyword } = data || {};
+  const skip = (page - 1) * pageSize;
+  let query = db.collection('device_serials');
+  if (keyword) {
+    query = query.where(_.or([
+      { SN: db.RegExp({ regexp: keyword, options: 'i' }) },
+      { CEMI: db.RegExp({ regexp: keyword, options: 'i' }) },
+      { deviceName: db.RegExp({ regexp: keyword, options: 'i' }) },
+      { deviceModel: db.RegExp({ regexp: keyword, options: 'i' }) }
+    ]));
+  }
+  const countRes = await query.count();
+  const res = await query.orderBy('createdAt', 'desc').skip(skip).limit(pageSize).get();
+  return {
+    code: 0,
+    data: {
+      list: res.data,
+      total: countRes.total,
+      page,
+      pageSize
+    }
+  };
 }

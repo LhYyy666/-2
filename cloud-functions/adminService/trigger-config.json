@@ -1,0 +1,14 @@
+{
+  "triggers": [
+    {
+      "name": "adminServiceHttp",
+      "type": "http",
+      "config": {
+        "methods": ["POST"],
+        "path": "/adminService",
+        "authType": "ANONYMOUS"
+      }
+    }
+  ]
+}
+

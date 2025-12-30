@@ -8,8 +8,9 @@
 
 ### 1. 部署云函数
 1. 将 `cloud-functions/adminService` 目录上传/部署到微信云开发环境。
-2. 在云函数管理后台，为 `adminService` 函数配置 **云函数 URL 化**（HTTP 触发）。
-3. 获取云函数的 HTTP 访问地址（例如：`https://xxxx.service.tcloudbase.com/adminService`）。
+2. 在微信开发者工具 → 云开发 → 选择环境 → 云函数 → 选择 `adminService` → 开启「HTTP 访问服务」（即云函数 URL 化/HTTP 触发）。
+3. 绑定路由：在「HTTP 访问服务」页的「域名关联资源」点击「新建」→ 填写路径 `/adminService` → 方法选择 `ANY/POST` → 关联资源选择「云函数」并选中 `adminService` → 访问权限选「公开访问」→ 保存。
+4. 获取云函数的 HTTP 访问地址（保存后控制台会生成，如：`https://xxxx.service.tcloudbase.com/adminService`）。
 4. 在云函数配置中添加环境变量 `JWT_SECRET`，设置一个复杂的字符串作为密钥。
 5. 确保云函数已安装依赖 (`wx-server-sdk`, `jsonwebtoken`, `bcryptjs`)。
 
