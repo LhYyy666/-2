@@ -1,10 +1,11 @@
 import axios from 'axios';
 import { useAuthStore } from '../stores/auth';
 import { ElMessage } from 'element-plus';
+import pinia from '../stores';
 
-// TODO: 请将此处替换为您的云函数 HTTP 访问 URL (云函数 URL 化)
-// 格式通常为: https://<env-id>.service.tcloudbase.com/adminService
-const CLOUD_FUNCTION_URL = 'https://your-env-id.service.tcloudbase.com/adminService'; 
+// 云函数 HTTP 访问 URL（云函数 URL 化 / HTTP 访问服务）
+// 示例：环境域名 + 你配置的路由路径，例如 /adminService
+const CLOUD_FUNCTION_URL = '/adminService';
 
 const service = axios.create({
   baseURL: CLOUD_FUNCTION_URL,
@@ -14,7 +15,7 @@ const service = axios.create({
 // Request interceptor
 service.interceptors.request.use(
   (config) => {
-    const authStore = useAuthStore();
+    const authStore = useAuthStore(pinia);
     if (authStore.token) {
       config.headers['Authorization'] = `Bearer ${authStore.token}`;
     }
@@ -34,7 +35,7 @@ service.interceptors.response.use(
       ElMessage.error(res.msg || 'Error');
       
       if (res.code === 401) {
-        const authStore = useAuthStore();
+        const authStore = useAuthStore(pinia);
         authStore.logout();
         // 简单处理：刷新页面或跳转登录
         setTimeout(() => {

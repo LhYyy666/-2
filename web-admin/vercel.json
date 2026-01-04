@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/adminService/:match*",
+      "destination": "https://cloud1-2gyakmjl948dda68-1393736980.ap-shanghai.app.tcloudbase.com/adminService/:match*"
+    }
+  ]
+}

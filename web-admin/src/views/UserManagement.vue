@@ -1,73 +1,81 @@
 <template>
   <div class="user-manage-container">
-    <el-container>
-      <el-header class="header">
-        <div class="logo">管理员后台</div>
-        <div class="user-info">
-          <el-button type="danger" link @click="handleLogout">退出登录</el-button>
-        </div>
-      </el-header>
-      
-      <el-main>
-        <el-card>
-          <template #header>
-            <div class="card-header">
-              <span>用户管理</span>
-              <div class="search-box">
-                <el-input
-                  v-model="searchKeyword"
-                  placeholder="搜索用户名/手机号"
-                  style="width: 200px; margin-right: 10px"
-                  clearable
-                  @clear="fetchUsers"
-                  @keyup.enter="fetchUsers"
-                />
-                <el-button type="primary" @click="fetchUsers">搜索</el-button>
-              </div>
-            </div>
-          </template>
-          
-          <el-table :data="tableData" v-loading="loading" style="width: 100%">
-            <el-table-column prop="_id" label="ID" width="220" />
-            <el-table-column prop="name" label="姓名" />
-            <el-table-column prop="phone" label="手机号" />
-            <el-table-column prop="role" label="权限等级">
-              <template #default="scope">
-                <el-tag :type="scope.row.role === 'admin' ? 'danger' : ''">{{ scope.row.role || 'user' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="180">
-              <template #default="scope">
-                <el-button size="small" @click="handleEdit(scope.row)">编辑</el-button>
-                <el-button size="small" type="danger" @click="handleDelete(scope.row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          
-          <div class="pagination-container">
-            <el-pagination
-              v-model:current-page="currentPage"
-              v-model:page-size="pageSize"
-              :total="total"
-              layout="total, prev, pager, next"
-              @current-change="handlePageChange"
-            />
+    <el-card class="box-card" shadow="never">
+      <template #header>
+        <div class="card-header">
+          <div class="header-left">
+            <span class="title">用户列表</span>
           </div>
-        </el-card>
-      </el-main>
-    </el-container>
+          <div class="header-right">
+            <el-input
+              v-model="searchKeyword"
+              placeholder="搜索用户名/手机号/地区"
+              style="width: 250px; margin-right: 15px"
+              clearable
+              prefix-icon="Search"
+              @clear="fetchUsers"
+              @keyup.enter="fetchUsers"
+            />
+            <el-button type="primary" icon="Search" @click="fetchUsers">搜索</el-button>
+          </div>
+        </div>
+      </template>
+      
+      <el-table 
+        :data="tableData" 
+        v-loading="loading" 
+        style="width: 100%" 
+        border 
+        stripe
+        highlight-current-row
+      >
+        <el-table-column prop="county" label="地区" width="240" align="center" show-overflow-tooltip>
+          <template #default="scope">
+            <div class="cell">{{ scope.row.county || '-' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="name" label="姓名" min-width="120" align="center" />
+        <el-table-column prop="phone" label="手机号" min-width="150" align="center" />
+        <el-table-column prop="role" label="权限等级" min-width="120" align="center">
+          <template #default="scope">
+            <el-tag :type="roleType(scope.row.role)" effect="plain" round>
+              {{ roleLabel(scope.row.role) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200" align="center" fixed="right">
+          <template #default="scope">
+            <el-button size="small" type="primary" link icon="Edit" @click="handleEdit(scope.row)">编辑</el-button>
+            <el-button size="small" type="danger" link icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      
+      <div class="pagination-container">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="fetchUsers"
+          @current-change="handlePageChange"
+          background
+        />
+      </div>
+    </el-card>
 
     <!-- 编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" title="修改用户信息" width="30%">
-      <el-form :model="editForm" label-width="80px">
+    <el-dialog v-model="dialogVisible" title="修改用户信息" width="500px" destroy-on-close>
+      <el-form :model="editForm" label-width="80px" class="edit-form">
         <el-form-item label="姓名">
-          <el-input v-model="editForm.name" />
+          <el-input v-model="editForm.name" placeholder="请输入姓名" />
         </el-form-item>
         <el-form-item label="手机号">
-          <el-input v-model="editForm.phone" />
+          <el-input v-model="editForm.phone" placeholder="请输入手机号" />
         </el-form-item>
         <el-form-item label="权限等级">
-          <el-select v-model="editForm.role" placeholder="Select">
+          <el-select v-model="editForm.role" placeholder="请选择权限" style="width: 100%">
             <el-option label="普通用户" value="user" />
             <el-option label="管理员" value="admin" />
           </el-select>
@@ -87,11 +95,6 @@
 import { ref, reactive, onMounted } from 'vue';
 import request from '../api/request';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { useAuthStore } from '../stores/auth';
-import { useRouter } from 'vue-router';
-
-const router = useRouter();
-const authStore = useAuthStore();
 
 const loading = ref(false);
 const tableData = ref([]);
@@ -132,11 +135,27 @@ const handlePageChange = (page) => {
   fetchUsers();
 };
 
+const normalizeRole = (r) => {
+  if (!r) return 'user';
+  const s = String(r).toLowerCase();
+  if (s === 'admin' || r === '管理员' || r === '行政') return 'admin';
+  if (s === 'user' || r === '普通用户') return 'user';
+  return 'user';
+};
+
+const roleLabel = (r) => {
+  const nr = normalizeRole(r);
+  return nr === 'admin' ? '管理员' : '普通用户';
+};
+
+const roleType = (r) => (normalizeRole(r) === 'admin' ? 'danger' : 'success');
+
 const handleEdit = (row) => {
   editForm.id = row._id;
   editForm.name = row.name || '';
   editForm.phone = row.phone || '';
-  editForm.role = row.role || 'user';
+  editForm.grid = row.grid || '';
+  editForm.role = normalizeRole(row.role || 'user');
   dialogVisible.value = true;
 };
 
@@ -148,6 +167,7 @@ const submitEdit = async () => {
       id: editForm.id,
       name: editForm.name,
       phone: editForm.phone,
+      grid: editForm.grid,
       role: editForm.role
     });
     ElMessage.success('更新成功');
@@ -183,47 +203,46 @@ const handleDelete = (row) => {
   });
 };
 
-const handleLogout = () => {
-  authStore.logout();
-  router.push('/login');
-};
-
 onMounted(() => {
   fetchUsers();
 });
 </script>
 
-<style scoped>
+<style scoped lang="scss">
 .user-manage-container {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
+  background-color: transparent;
 }
 
-.header {
-  background-color: #fff;
-  border-bottom: 1px solid #dcdfe6;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0 20px;
-}
-
-.logo {
-  font-size: 20px;
-  font-weight: bold;
-  color: #409eff;
+.box-card {
+  border: none;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
 }
 
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  
+  .title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+  }
+  
+  .header-right {
+    display: flex;
+    align-items: center;
+  }
 }
 
 .pagination-container {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+}
+
+.edit-form {
+  padding: 0 20px;
 }
 </style>

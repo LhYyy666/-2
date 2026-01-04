@@ -1,0 +1,10 @@
+{
+  "name": "adminService",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "@cloudbase/node-sdk": "^2.9.1",
+    "bcryptjs": "^3.0.3"
+  }
+}
